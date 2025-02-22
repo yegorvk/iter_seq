@@ -1,5 +1,4 @@
 #![no_std]
-extern crate alloc;
 
 /// Stateless, transformable, abstract sequence of values.
 ///
@@ -12,7 +11,7 @@ extern crate alloc;
 /// the compiler often cannot reliably optimize away. This crate provides
 /// a "wrapper" around standard iterators that must be irreversibly
 /// converted into an iterator before its elements can be consumed.
-/// 
+///
 /// # Example
 /// ```
 /// use iter_seq::{Sequence, const_repeat};
@@ -21,18 +20,17 @@ extern crate alloc;
 ///     .enumerate()
 ///     .map(|(i, _)| i as u32)
 ///     .map(|n| (n + 1) * (n + 1));
-/// 
+///
 /// let arr: [u32; 128] = odd_squares.const_take_exact::<128>()
 ///     .collect_array();
-/// 
+///
 /// for (i, n) in arr.iter().enumerate() {
 ///     assert_eq!((i as u32 + 1) * (i as u32 + 1), *n);
-/// } 
-/// 
+/// }
+///
 /// ```
 use core::marker::PhantomData;
 use core::{array, iter, slice};
-
 
 /// Represents a stateless abstract sequence of values.
 ///
@@ -127,10 +125,7 @@ unsafe impl<S: InfiniteLen, const N: usize> ConstMinLen<N> for S {}
 /// exactly `N` elements.
 pub unsafe trait ConstLen<const N: usize>: ConstMinLen<N> + ConstMaxLen<N> {}
 
-unsafe impl<T, const N: usize> ConstLen<N> for T
-where 
-    T: ConstMinLen<N> + ConstMaxLen<N>,
-{}
+unsafe impl<T, const N: usize> ConstLen<N> for T where T: ConstMinLen<N> + ConstMaxLen<N> {}
 
 /// Represents a type that can be converted into a sequence.
 ///
@@ -396,7 +391,7 @@ mod tests {
     #[test]
     fn iter_seq() {
         let even = (0..10).step_by(2).into_sequence();
-        
+
         for (i, n) in even.enumerate().into_iter() {
             assert_eq!(2 * i, n);
         }
