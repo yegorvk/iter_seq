@@ -120,6 +120,18 @@ unsafe trait InfiniteLen: Sequence {}
 // SAFETY: an infinite sequence produces elements indefinitely.
 unsafe impl<S: InfiniteLen, const N: usize> ConstMinLen<N> for S {}
 
+/// A `Sequence` that is guaranteed to yield *exactly* `N` elements.
+///
+/// # Safety
+/// Implementing this trait is sound only if the sequence always produces
+/// exactly `N` elements.
+pub unsafe trait ConstLen<const N: usize>: ConstMinLen<N> + ConstMaxLen<N> {}
+
+unsafe impl<T, const N: usize> ConstLen<N> for T
+where 
+    T: ConstMinLen<N> + ConstMaxLen<N>,
+{}
+
 /// Represents a type that can be converted into a sequence.
 ///
 /// The motivation behind this trait is to avoid directly implementing
