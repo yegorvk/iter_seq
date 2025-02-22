@@ -1,0 +1,16 @@
+[package]
+name = "iter_seq"
+version = "0.1.0"
+edition = "2021"
+authors = ["Yegor Vaskonyan <yegor.vaskonyan@gmail.com>"]
+description = "Stateless, transformable, abstract sequence of values"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yegorvk/iter_seq"
+readme = "README.md"
+keywords = ["no_std", "sequence", "iterator", "iter"]
+categories = ["no-std::no-alloc", "data-structures"]
+
+[dependencies]
+
+[dev-dependencies]
+itertools = "0.14.0"
