@@ -64,41 +64,41 @@ impl Size for InfiniteSize {
 }
 
 #[sealed]
-pub trait IsLessThan<Rhs> {}
+pub trait IsLessThan<Rhs: Size> {}
 
 #[sealed]
-pub trait IsLessOrEqual<Rhs> {}
+pub trait IsLessOrEqual<Rhs: Size> {}
 
 #[sealed]
-pub trait IsGreaterThan<Rhs> {}
+pub trait IsGreaterThan<Rhs: Size> {}
 
 #[sealed]
-pub trait IsGreaterOrEqual<Rhs> {}
+pub trait IsGreaterOrEqual<Rhs: Size> {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsLessThan<M> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsLessThan<StaticSize<M>> for StaticSize<N> 
 where 
     N: typenum::IsLess<M> 
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsLessOrEqual<M> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsLessOrEqual<StaticSize<M>> for StaticSize<N> 
 where 
     N: typenum::IsLessOrEqual<M> 
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsGreaterThan<M> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsGreaterThan<StaticSize<M>> for StaticSize<N> 
 where 
     N: typenum::IsGreater<M> 
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsGreaterOrEqual<M> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsGreaterOrEqual<StaticSize<M>> for StaticSize<N> 
 where
     N: typenum::IsGreaterOrEqual<M>
 {}

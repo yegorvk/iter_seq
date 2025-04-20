@@ -1,5 +1,5 @@
 use crate::size::{IsGreaterOrEqual, IsLessOrEqual};
-use crate::{Sequence, ToUInt, U};
+use crate::{Sequence, StaticSize, ToUInt, U};
 use sealed::sealed;
 use typenum::{Const, Unsigned};
 
@@ -55,12 +55,12 @@ where
 #[sealed]
 unsafe impl<S: Sequence, N: Unsigned> LowerBound<N> for S
 where
-    S::MinSize: IsGreaterOrEqual<N>,
+    S::MinSize: IsGreaterOrEqual<StaticSize<N>>,
 {}
 
 #[rustfmt::skip]
 #[sealed]
 unsafe impl<S: Sequence, N: Unsigned> UpperBound<N> for S
 where
-    S::MinSize: IsLessOrEqual<N>,
+    S::MinSize: IsLessOrEqual<StaticSize<N>>,
 {}

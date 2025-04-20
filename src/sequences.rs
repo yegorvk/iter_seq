@@ -1,4 +1,4 @@
-use crate::{DynamicSize, InfiniteSize, Sequence, SizeKind, StaticSize, ToUInt, U};
+use crate::{DynamicSize, Enumerate, InfiniteSize, Map, Sequence, SizeKind, StaticSize, ToUInt, U};
 use core::{array, iter, slice};
 use typenum::Const;
 
@@ -196,4 +196,15 @@ impl<T, const N: usize> ArrayExt<T, N> for [T; N] {
     fn as_seq_mut(&mut self) -> ArrayMutSliceSeq<T, N> {
         ArrayMutSliceSeq { arr: self }
     }
+}
+
+pub type FromFn<F> = Map<Map<Enumerate<Repeat>, fn((usize, ())) -> usize>, F>;
+
+#[inline]
+pub fn from_fn<F, B>(f: F) -> FromFn<F>
+where
+    F: FnMut(usize) -> B,
+{
+    let unwrap: fn((usize, _)) -> usize = |(i, _)| i;
+    repeat(()).enumerate().map(unwrap).map(f)
 }

@@ -30,6 +30,9 @@
 //!
 //! ```
 
+#[cfg(test)]
+extern crate std;
+
 mod adapters;
 mod bounds;
 mod sequences;
@@ -40,11 +43,11 @@ use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::{array, mem};
 
-use crate::adapters::TakeExactS;
-pub use crate::adapters::{Enumerate, FlatMap, Flatten, Map, TakeExactSTn};
+pub use crate::adapters::{Enumerate, FlatMap, Flatten, Map, TakeExactS, TakeExactSTn};
 pub use crate::bounds::{LowerBound, UpperBound, WithLowerBound, WithUpperBound};
 pub use crate::sequences::{
-    repeat, ArrayExt, ArrayMutSliceSeq, ArraySeq, ArraySliceSeq, IntoIteratorExt, IterSeq, Repeat,
+    from_fn, repeat, ArrayExt, ArrayMutSliceSeq, ArraySeq, ArraySliceSeq, FromFn, IntoIteratorExt,
+    IterSeq, Repeat,
 };
 pub use crate::size::{DynamicSize, InfiniteSize, Size, SizeKind, StaticSize};
 pub use crate::utils::{ToUInt, U};
@@ -132,6 +135,14 @@ pub unsafe trait Sequence {
             debug_assert!(elem.is_some(), "sequence min_size invariant violated");
             unsafe { elem.unwrap_unchecked() }
         };
+
+        if const { size_of::<Self::Item>() == 0 } {
+            for _ in 0..N {
+                _ = next_elem();
+            }
+            
+            return;
+        }
 
         if const { mem::needs_drop::<Self::Item>() } {
             struct DropGuard<'a, T, const N: usize> {
@@ -252,9 +263,11 @@ macro_rules! collect_array {
 
 #[cfg(test)]
 mod tests {
-    use crate::{repeat, ArrayExt, IntoIteratorExt, Sequence};
-    use core::iter::zip;
+    use super::*;
     use itertools::Itertools;
+    use std::iter::zip;
+    use std::panic::catch_unwind;
+    use std::sync::Mutex;
 
     #[test]
     fn iter_seq() {
@@ -270,15 +283,14 @@ mod tests {
         let mut a = 0u64;
         let mut b = 1u64;
 
-        let fib: [u64; 64] = repeat(())
-            .take_exact_s::<64>()
-            .map(|()| {
-                let c = a + b;
-                a = b;
-                b = c;
-                a
-            })
-            .collect_array();
+        let fib: [u64; 64] = from_fn(|_| {
+            let c = a + b;
+            a = b;
+            b = c;
+            a
+        })
+        .take_exact_s::<64>()
+        .collect_array();
 
         for (a, b, c) in fib.iter().tuple_windows() {
             assert_eq!(*c, *a + *b);
@@ -291,5 +303,65 @@ mod tests {
         for (a, b) in zip(&fib, &fib2) {
             assert_eq!((*a as u128) * (*a as u128), *b);
         }
+    }
+
+    #[test]
+    fn flatten() {
+        let prog = from_fn(|i| {
+            repeat(())
+                .enumerate()
+                .map(move |(j, _)| (i, j))
+                .take_exact_s::<64>()
+        })
+        .take_exact_s::<128>()
+        .flatten();
+
+        let arr: [(usize, usize); 64 * 128] = collect_array!(prog);
+
+        for (i, elem) in arr.iter().enumerate() {
+            let x = i / 64;
+            let y = i % 64;
+            assert_eq!((x, y), *elem);
+        }
+    }
+
+    #[test]
+    fn collect_array_panic() {
+        let drop_counter = Mutex::new(0usize);
+
+        struct Value<'a> {
+            drop_counter: &'a Mutex<usize>,
+        }
+
+        impl Drop for Value<'_> {
+            fn drop(&mut self) {
+                let mut guard = self.drop_counter.lock().unwrap();
+                *guard += 1;
+            }
+        }
+
+        let my_seq = from_fn(|i| {
+            if i < 7 {
+                Value {
+                    drop_counter: &drop_counter,
+                }
+            } else {
+                panic!();
+            }
+        });
+
+        let unwind = catch_unwind(|| {
+            let _: [_; 8] = collect_array!(my_seq);
+        });
+
+        assert!(unwind.is_err());
+        assert_eq!(*drop_counter.lock().unwrap(), 7);
+    }
+    
+    #[test]
+    fn collect_array_zst() {
+        let seq = repeat(()).take_exact_s::<1000>();
+        let arr: [(); 900] = collect_array!(seq);
+        assert_eq!(arr, [(); 900]);
     }
 }
