@@ -15,15 +15,15 @@ converted into an iterator before its elements can be consumed.
 # Example
 
 ```rust
-use iter_seq::{const_repeat, Sequence};
+use iter_seq::{Sequence, repeat};
 
 fn main() {
-    let odd_squares = const_repeat()
+    let odd_squares = repeat(())
         .enumerate()
         .map(|(i, _)| i as u32)
         .map(|n| (n + 1) * (n + 1));
 
-    let arr: [u32; 128] = odd_squares.const_take_exact::<128>()
+    let arr: [u32; 128] = odd_squares.take_exact_s::<128>()
         .collect_array();
 
     for (i, n) in arr.iter().enumerate() {

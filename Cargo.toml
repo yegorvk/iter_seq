@@ -1,6 +1,6 @@
 [package]
 name = "iter_seq"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 authors = ["Yegor Vaskonyan <yegor.vaskonyan@gmail.com>"]
 description = "Stateless, transformable, abstract sequence of values"
@@ -11,6 +11,8 @@ keywords = ["no_std", "sequence", "iterator", "iter"]
 categories = ["no-std::no-alloc", "data-structures"]
 
 [dependencies]
+typenum = { version = "1.18.0", features = ["const-generics"] }
+sealed = "0.6.0"
 
 [dev-dependencies]
 itertools = "0.14.0"

@@ -1,36 +1,55 @@
 #![no_std]
 
-/// Stateless, transformable, abstract sequence of values.
-///
-/// This crate provides a mechanism for working with abstract *stateless*
-/// sequences of arbitrary values. In contrast, standard iterators are
-/// stateful—that is, their state can be changed by calling `next`.
-///
-/// One significant limitation of the stateful model is its inability to encode
-/// compile-time invariants, which can lead to unnecessary overhead that
-/// the compiler often cannot reliably optimize away. This crate provides
-/// a "wrapper" around standard iterators that must be irreversibly
-/// converted into an iterator before its elements can be consumed.
-///
-/// # Example
-/// ```
-/// use iter_seq::{Sequence, const_repeat};
-///
-/// let odd_squares = const_repeat()
-///     .enumerate()
-///     .map(|(i, _)| i as u32)
-///     .map(|n| (n + 1) * (n + 1));
-///
-/// let arr: [u32; 128] = odd_squares.const_take_exact::<128>()
-///     .collect_array();
-///
-/// for (i, n) in arr.iter().enumerate() {
-///     assert_eq!((i as u32 + 1) * (i as u32 + 1), *n);
-/// }
-///
-/// ```
+//! Stateless, transformable, abstract sequences of values.
+//!
+//! This crate provides a mechanism for working with abstract *stateless*
+//! sequences of arbitrary values. In contrast, standard iterators are
+//! stateful—that is, their state can be changed by calling `next`.
+//!
+//! One significant limitation of the stateful model is its inability to encode
+//! compile-time invariants, which can lead to unnecessary overhead that
+//! the compiler often cannot reliably optimize away. This crate provides
+//! a "wrapper" around standard iterators that must be irreversibly
+//! converted into an iterator before its elements can be consumed.
+//!
+//! # Example
+//! ```
+//! use iter_seq::{Sequence, repeat};
+//!
+//! let odd_squares = repeat(())
+//!     .enumerate()
+//!     .map(|(i, _)| i as u32)
+//!     .map(|n| (n + 1) * (n + 1));
+//!
+//! let arr: [u32; 128] = odd_squares.take_exact_s::<128>()
+//!     .collect_array();
+//!
+//! for (i, n) in arr.iter().enumerate() {
+//!     assert_eq!((i as u32 + 1) * (i as u32 + 1), *n);
+//! }
+//!
+//! ```
+
+mod adapters;
+mod bounds;
+mod sequences;
+mod size;
+mod utils;
+
 use core::marker::PhantomData;
-use core::{array, iter, slice};
+use core::mem::MaybeUninit;
+use core::{array, mem};
+
+use crate::adapters::TakeExactS;
+pub use crate::adapters::{Enumerate, FlatMap, Flatten, Map, TakeExactSTn};
+pub use crate::bounds::{LowerBound, UpperBound, WithLowerBound, WithUpperBound};
+pub use crate::sequences::{
+    repeat, ArrayExt, ArrayMutSliceSeq, ArraySeq, ArraySliceSeq, IntoIteratorExt, IterSeq, Repeat,
+};
+pub use crate::size::{DynamicSize, InfiniteSize, Size, SizeKind, StaticSize};
+pub use crate::utils::{ToUInt, U};
+pub use typenum;
+pub use typenum::{Const, Unsigned};
 
 /// Represents a stateless abstract sequence of values.
 ///
@@ -40,18 +59,55 @@ use core::{array, iter, slice};
 ///
 /// This design allows a `Sequence` to encode additional invariants, such as a
 /// constant size, which is not possible with standard iterators.
-pub trait Sequence {
+///
+/// # Safety
+/// This crates is unsafe, because there are certain invariants on
+/// `MinSize`/`min_size` and `MaxSize`/`max_size` that must be
+/// upheld in order to avoid causing undefined behaviours.
+pub unsafe trait Sequence {
     type Item;
     type Iter: Iterator<Item = Self::Item>;
 
+    /// The minimum size of the sequence.
+    ///
+    /// # Safety
+    /// This value must *never* be greater than the actual minimum possible
+    /// number of elements in the sequence, excluding panics.
+    type MinSize: Size;
+
+    /// The maximum size of the sequence.
+    ///
+    /// # Safety
+    /// This value must *never* be less than the actual maximum
+    /// possible number of elements in the sequence.
+    type MaxSize: Size;
+
+    const MIN_SIZE: Option<SizeKind> = Self::MinSize::STATIC_SIZE;
+    const MAX_SIZE: Option<SizeKind> = Self::MaxSize::STATIC_SIZE;
+
     /// Converts this sequence into a (stateful) iterator.
     fn into_iter(self) -> Self::Iter;
+
+    /// Returns the minimum size of the sequence.
+    ///
+    /// # Safety
+    /// This value must *never* be greater than the actual minimum possible
+    /// number of elements in the sequence, excluding panics.
+    fn min_size(&self) -> SizeKind;
+
+    /// Returns the maximum size of the sequence.
+    ///
+    /// # Safety
+    /// This value must *never* be less than the actual maximum
+    /// possible number of elements in the sequence.
+    fn max_size(&self) -> SizeKind;
 
     /// Collects this sequence's elements into an array.
     #[inline]
     fn collect_array<const N: usize>(self) -> [Self::Item; N]
     where
-        Self: Sized + ConstMinLen<N>,
+        Self: Sized + WithLowerBound<N>,
+        Const<N>: ToUInt,
     {
         let mut iter = self.into_iter();
 
@@ -62,8 +118,65 @@ pub trait Sequence {
         })
     }
 
-    /// Returns a new sequence that transforms every element of the original
-    /// sequence using `f`.
+    /// Collects this sequence's elements into an array in place.
+    #[inline(always)]
+    fn collect_array_in_place<const N: usize>(self, out: &mut MaybeUninit<[Self::Item; N]>)
+    where
+        Self: Sized + WithLowerBound<N>,
+        Const<N>: ToUInt,
+    {
+        let mut iter = self.into_iter();
+
+        let mut next_elem = || {
+            let elem = iter.next();
+            debug_assert!(elem.is_some(), "sequence min_size invariant violated");
+            unsafe { elem.unwrap_unchecked() }
+        };
+
+        if const { mem::needs_drop::<Self::Item>() } {
+            struct DropGuard<'a, T, const N: usize> {
+                arr: &'a mut MaybeUninit<[T; N]>,
+                filled: usize,
+            }
+
+            impl<T, const N: usize> Drop for DropGuard<'_, T, N> {
+                fn drop(&mut self) {
+                    for i in 0..self.filled {
+                        let ptr = self.arr.as_mut_ptr() as *mut T;
+                        let slot = unsafe { ptr.add(i) };
+                        unsafe { core::ptr::drop_in_place(slot) };
+                    }
+                }
+            }
+
+            let mut guard = DropGuard {
+                arr: out,
+                filled: 0,
+            };
+
+            while guard.filled < N {
+                // This could panic.
+                let elem = next_elem();
+                let ptr: *mut Self::Item = guard.arr.as_mut_ptr().cast();
+                let slot = unsafe { ptr.add(guard.filled) };
+                unsafe { slot.write(elem) }
+                guard.filled += 1;
+            }
+
+            mem::forget(guard);
+        } else {
+            for i in 0..N {
+                // We don't care if it panics.
+                let elem = next_elem();
+                let ptr: *mut Self::Item = out.as_mut_ptr().cast();
+                let slot = unsafe { ptr.add(i) };
+                unsafe { slot.write(elem) }
+            }
+        }
+    }
+
+    /// Returns a new sequence that transforms every element of
+    /// the original sequence using `f`.
     #[inline]
     fn map<F, B>(self, f: F) -> Map<Self, F>
     where
@@ -71,6 +184,28 @@ pub trait Sequence {
         F: FnMut(Self::Item) -> B,
     {
         Map { seq: self, f }
+    }
+
+    /// Returns a new sequence that transforms every element of the original
+    /// sequence by calling `f` and then "flattening" the result.
+    #[inline]
+    fn flat_map<F, U>(self, f: F) -> FlatMap<Self, F>
+    where
+        Self: Sized,
+        U: Sequence,
+        F: FnMut(Self::Item) -> U,
+    {
+        self.map(f).flatten()
+    }
+
+    /// "Flattens" the sequence by removing one nesting layer.
+    #[inline]
+    fn flatten<U>(self) -> Flatten<Self>
+    where
+        Self: Sequence<Item = U> + Sized,
+        U: Sequence,
+    {
+        Flatten { seq: self }
     }
 
     /// Returns a new sequence that yields the current iteration index
@@ -83,314 +218,47 @@ pub trait Sequence {
         Enumerate { seq: self }
     }
 
-    /// Returns a new sequence that yields exactly `N` first elements of the original sequence.
+    /// Returns a new sequence that always yields the first exactly `N` elements.
     #[inline]
-    fn const_take_exact<const N: usize>(self) -> ConstTakeExact<Self, N>
+    fn take_exact_stn<N: Unsigned>(self) -> TakeExactSTn<Self, N>
     where
-        Self: Sized + ConstMinLen<N>,
+        Self: Sized,
     {
-        ConstTakeExact { seq: self }
-    }
-}
-
-/// A `Sequence` that is guaranteed to yield *at least* `N` elements.
-///
-/// # Safety
-/// Implementing this trait is sound only if the sequence always produces
-/// at least `N` elements when no panics occur.
-pub unsafe trait ConstMinLen<const N: usize>: Sequence {}
-
-/// A `Sequence` that is guaranteed to yield *at most* `N` elements.
-///
-/// # Safety
-/// Implementing this trait is sound only if the sequence always produces at
-/// most `N` elements.
-pub unsafe trait ConstMaxLen<const N: usize>: Sequence {}
-
-/// A `Sequence` that is guaranteed to yield elements indefinitely as long as
-/// no panics occur.
-///
-/// # Safety
-/// Implementing this trait is sound only if the sequence indefinitely yields
-/// elements as long as no panics occur.
-unsafe trait InfiniteLen: Sequence {}
-
-// SAFETY: an infinite sequence produces elements indefinitely.
-unsafe impl<S: InfiniteLen, const N: usize> ConstMinLen<N> for S {}
-
-/// A `Sequence` that is guaranteed to yield *exactly* `N` elements.
-///
-/// # Safety
-/// Implementing this trait is sound only if the sequence always produces
-/// exactly `N` elements.
-pub unsafe trait ConstLen<const N: usize>: ConstMinLen<N> + ConstMaxLen<N> {}
-
-unsafe impl<T, const N: usize> ConstLen<N> for T where T: ConstMinLen<N> + ConstMaxLen<N> {}
-
-/// Represents a type that can be converted into a sequence.
-///
-/// The motivation behind this trait is to avoid directly implementing
-/// `Sequence` for builtin types, which could lead to ambiguities for
-/// end users because of method name collisions.
-pub trait IntoSequence {
-    type Item;
-    type Sequence: Sequence<Item = Self::Item>;
-
-    /// Converts `self` into a sequence.
-    fn into_sequence(self) -> Self::Sequence;
-}
-
-/// Allowed borrowing `self` as a sequence of values owned by `self`.
-pub trait AsSequence {
-    type Item;
-
-    type Sequence<'a>: Sequence<Item = &'a Self::Item>
-    where
-        Self: 'a,
-        Self::Item: 'a;
-
-    fn as_sequence(&self) -> Self::Sequence<'_>;
-}
-
-/// Allowed borrowing `self` mutably as a sequence of values owned by `self`.
-pub trait AsSequenceMut {
-    type Item;
-
-    type Sequence<'a>: Sequence<Item = &'a mut Self::Item>
-    where
-        Self: 'a,
-        Self::Item: 'a;
-
-    fn as_sequence_mut(&mut self) -> Self::Sequence<'_>;
-}
-
-/// A sequence that transforms every element of the original sequence using `f`.
-///
-/// This struct is created by the [`map`](Sequence::map) method on [`Sequence`].
-pub struct Map<S, F> {
-    seq: S,
-    f: F,
-}
-
-impl<S, F, B> Sequence for Map<S, F>
-where
-    S: Sequence,
-    F: FnMut(S::Item) -> B,
-{
-    type Item = B;
-    type Iter = iter::Map<S::Iter, F>;
-
-    #[inline]
-    fn into_iter(self) -> Self::Iter {
-        self.seq.into_iter().map(self.f)
-    }
-}
-
-unsafe impl<S, F, B, const N: usize> ConstMinLen<N> for Map<S, F>
-where
-    S: Sequence + ConstMinLen<N>,
-    F: FnMut(S::Item) -> B,
-{
-}
-
-unsafe impl<S, F, B, const N: usize> ConstMaxLen<N> for Map<S, F>
-where
-    S: Sequence + ConstMaxLen<N>,
-    F: FnMut(S::Item) -> B,
-{
-}
-
-/// A sequence that yields the current iteration index for every element.
-pub struct Enumerate<S> {
-    seq: S,
-}
-
-impl<S: Sequence> Sequence for Enumerate<S> {
-    type Item = (usize, S::Item);
-    type Iter = iter::Enumerate<S::Iter>;
-
-    #[inline]
-    fn into_iter(self) -> Self::Iter {
-        self.seq.into_iter().enumerate()
-    }
-}
-
-unsafe impl<S, const N: usize> ConstMinLen<N> for Enumerate<S> where S: Sequence + ConstMinLen<N> {}
-unsafe impl<S, const N: usize> ConstMaxLen<N> for Enumerate<S> where S: Sequence + ConstMaxLen<N> {}
-
-pub struct ConstTakeExact<S, const N: usize> {
-    seq: S,
-}
-
-impl<S, const N: usize> Sequence for ConstTakeExact<S, N>
-where
-    S: Sequence + ConstMinLen<N>,
-{
-    type Item = S::Item;
-    type Iter = iter::Take<S::Iter>;
-
-    #[inline]
-    fn into_iter(self) -> Self::Iter {
-        self.seq.into_iter().take(N)
-    }
-}
-
-unsafe impl<S, const N: usize> ConstMinLen<N> for ConstTakeExact<S, N> where
-    S: Sequence + ConstMinLen<N>
-{
-}
-unsafe impl<S, const N: usize> ConstMaxLen<N> for ConstTakeExact<S, N> where
-    S: Sequence + ConstMinLen<N>
-{
-}
-
-/// A sequence created from an iterator.
-pub struct IterSeq<I> {
-    iter: I,
-}
-
-impl<I> IterSeq<I> {
-    #[inline]
-    pub fn into_inner(self) -> I {
-        self.iter
-    }
-}
-
-impl<I: IntoIterator> Sequence for IterSeq<I> {
-    type Item = I::Item;
-    type Iter = I::IntoIter;
-
-    #[inline]
-    fn into_iter(self) -> Self::Iter {
-        I::into_iter(self.iter)
-    }
-}
-
-impl<I: IntoIterator> IntoSequence for I {
-    type Item = I::Item;
-    type Sequence = IterSeq<I>;
-
-    #[inline]
-    fn into_sequence(self) -> Self::Sequence {
-        IterSeq { iter: self }
-    }
-}
-
-// SAFETY: arrays have a constant length.
-unsafe impl<T, const N: usize> ConstMinLen<N> for IterSeq<[T; N]> {}
-
-// SAFETY: arrays have a constant length.
-unsafe impl<T, const N: usize> ConstMaxLen<N> for IterSeq<[T; N]> {}
-
-/// A sequence created from an iterator over immutably borrowed values.
-pub struct BorrowedIterSeq<I, T> {
-    iter: I,
-    _owner: PhantomData<fn() -> T>,
-}
-
-impl<I: IntoIterator, T> Sequence for BorrowedIterSeq<I, T> {
-    type Item = I::Item;
-    type Iter = I::IntoIter;
-
-    #[inline]
-    fn into_iter(self) -> Self::Iter {
-        I::into_iter(self.iter)
-    }
-}
-
-type BorrowedArraySeq<'a, T, const N: usize> = BorrowedIterSeq<slice::Iter<'a, T>, [T; N]>;
-
-unsafe impl<'a, T, const N: usize> ConstMinLen<N> for BorrowedArraySeq<'a, T, N> {}
-unsafe impl<'a, T, const N: usize> ConstMaxLen<N> for BorrowedArraySeq<'a, T, N> {}
-
-/// A sequence created from an iterator over mutably borrowed values.
-pub struct BorrowedMutIterSeq<I, T> {
-    iter: I,
-    _owner: PhantomData<fn() -> T>,
-}
-
-impl<I: IntoIterator, T> Sequence for BorrowedMutIterSeq<I, T> {
-    type Item = I::Item;
-    type Iter = I::IntoIter;
-
-    #[inline]
-    fn into_iter(self) -> Self::Iter {
-        I::into_iter(self.iter)
-    }
-}
-
-type BorrowedMutArraySeq<'a, T, const N: usize> = BorrowedMutIterSeq<slice::IterMut<'a, T>, [T; N]>;
-
-unsafe impl<'a, T, const N: usize> ConstMinLen<N> for BorrowedMutArraySeq<'a, T, N> {}
-unsafe impl<'a, T, const N: usize> ConstMaxLen<N> for BorrowedMutArraySeq<'a, T, N> {}
-
-impl<T, const N: usize> AsSequence for [T; N] {
-    type Item = T;
-
-    type Sequence<'a>
-        = BorrowedArraySeq<'a, T, N>
-    where
-        T: 'a;
-
-    #[inline]
-    fn as_sequence(&self) -> Self::Sequence<'_> {
-        BorrowedArraySeq {
-            iter: self.iter(),
-            _owner: PhantomData,
+        TakeExactSTn {
+            seq: self,
+            _n: PhantomData,
         }
     }
-}
 
-impl<T, const N: usize> AsSequenceMut for [T; N] {
-    type Item = T;
-
-    type Sequence<'a>
-        = BorrowedMutArraySeq<'a, T, N>
+    /// Returns a new sequence that always yields the first exactly `N` elements.
+    #[inline]
+    fn take_exact_s<const N: usize>(self) -> TakeExactS<Self, N>
     where
-        T: 'a;
-
-    #[inline]
-    fn as_sequence_mut(&mut self) -> Self::Sequence<'_> {
-        BorrowedMutArraySeq {
-            iter: self.iter_mut(),
-            _owner: PhantomData,
-        }
+        Self: Sized,
+        Const<N>: ToUInt,
+    {
+        self.take_exact_stn::<U<N>>()
     }
 }
 
-pub struct ConstRepeat;
-
-impl Sequence for ConstRepeat {
-    type Item = ();
-    type Iter = iter::Repeat<()>;
-
-    #[inline]
-    fn into_iter(self) -> Self::Iter {
-        iter::repeat(())
-    }
-}
-
-// SAFETY: `ConstRepeat` uses `iter::repeat`, which yields elements indefinitely.
-// It is not in general a good idea to rely on safe code to uphold unsafe
-// invariants, but in this specific case the "safe" code comes from the
-// standard library and the invariant is trivial.
-unsafe impl InfiniteLen for ConstRepeat {}
-
-/// Creates a new sequence that indefinitely yields empty tuples.
-#[inline]
-pub fn const_repeat() -> ConstRepeat {
-    ConstRepeat
+#[macro_export]
+macro_rules! collect_array {
+    ($seq:expr) => {{
+        let mut arr = ::core::mem::MaybeUninit::uninit();
+        $crate::Sequence::collect_array_in_place($seq, &mut arr);
+        unsafe { arr.assume_init() }
+    }};
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{const_repeat, AsSequence, IntoSequence, Sequence};
+    use crate::{repeat, ArrayExt, IntoIteratorExt, Sequence};
     use core::iter::zip;
     use itertools::Itertools;
 
     #[test]
     fn iter_seq() {
-        let even = (0..10).step_by(2).into_sequence();
+        let even = (0..10).step_by(2).iter_seq();
 
         for (i, n) in even.enumerate().into_iter() {
             assert_eq!(2 * i, n);
@@ -402,8 +270,8 @@ mod tests {
         let mut a = 0u64;
         let mut b = 1u64;
 
-        let fib = const_repeat()
-            .const_take_exact::<64>()
+        let fib: [u64; 64] = repeat(())
+            .take_exact_s::<64>()
             .map(|()| {
                 let c = a + b;
                 a = b;
@@ -416,10 +284,9 @@ mod tests {
             assert_eq!(*c, *a + *b);
         }
 
-        let fib2 = fib
-            .as_sequence()
-            .map(|n| (*n as u128) * (*n as u128))
-            .collect_array();
+        let fib2: [u128; 64] = collect_array! {
+            fib.as_seq().map(|n| (*n as u128) * (*n as u128))
+        };
 
         for (a, b) in zip(&fib, &fib2) {
             assert_eq!((*a as u128) * (*a as u128), *b);
