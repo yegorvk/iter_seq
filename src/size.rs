@@ -64,6 +64,24 @@ impl Size for InfiniteSize {
 }
 
 #[sealed]
+pub trait IsFinite {}
+
+#[sealed]
+impl<N: Unsigned> IsFinite for StaticSize<N> {}
+
+#[sealed]
+pub trait IsInfinite {}
+
+#[sealed]
+impl IsInfinite for InfiniteSize {}
+
+#[sealed]
+pub trait IsDynamic {}
+
+#[sealed]
+impl IsDynamic for DynamicSize {}
+
+#[sealed]
 pub trait IsLessThan<Rhs: Size> {}
 
 #[sealed]
@@ -74,6 +92,16 @@ pub trait IsGreaterThan<Rhs: Size> {}
 
 #[sealed]
 pub trait IsGreaterOrEqual<Rhs: Size> {}
+
+#[sealed]
+pub trait IsEqual<Rhs: Size> {}
+
+#[rustfmt::skip]
+#[sealed]
+impl<N: Unsigned, M: Unsigned> IsEqual<StaticSize<M>> for StaticSize<N> 
+where 
+    N: typenum::IsEqual<M> 
+{}
 
 #[rustfmt::skip]
 #[sealed]

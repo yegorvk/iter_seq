@@ -49,7 +49,10 @@ pub use crate::sequences::{
     from_fn, repeat, ArrayExt, ArrayMutSliceSeq, ArraySeq, ArraySliceSeq, FromFn, IntoIteratorExt,
     IterSeq, Repeat,
 };
-pub use crate::size::{DynamicSize, InfiniteSize, Size, SizeKind, StaticSize};
+pub use crate::size::{
+    DynamicSize, InfiniteSize, IsDynamic, IsEqual, IsFinite, IsGreaterOrEqual, IsGreaterThan,
+    IsInfinite, IsLessOrEqual, IsLessThan, Size, SizeKind, StaticSize,
+};
 pub use crate::utils::{ToUInt, U};
 pub use typenum;
 pub use typenum::{Const, Unsigned};
@@ -106,7 +109,7 @@ pub unsafe trait Sequence {
     fn max_size(&self) -> SizeKind;
 
     /// Collects this sequence's elements into an array.
-    #[inline]
+    #[inline(always)]
     fn collect_array<const N: usize>(self) -> [Self::Item; N]
     where
         Self: Sized + WithLowerBound<N>,
@@ -115,7 +118,7 @@ pub unsafe trait Sequence {
         let mut iter = self.into_iter();
 
         array::from_fn(|_| {
-            // SAFETY: the invariant of `ConstMinLen` guarantees that
+            // SAFETY: the invariant of `WithLowerBound` guarantees that
             // the iterator will always produce at least `N` elements.
             unsafe { iter.next().unwrap_unchecked() }
         })
@@ -133,14 +136,17 @@ pub unsafe trait Sequence {
         let mut next_elem = || {
             let elem = iter.next();
             debug_assert!(elem.is_some(), "sequence min_size invariant violated");
+            // SAFETY: the invariant of `WithLowerBound` guarantees that
+            // the iterator will always produce at least `N` elements.
             unsafe { elem.unwrap_unchecked() }
         };
 
+        // Special handling for ZSTs.
         if const { size_of::<Self::Item>() == 0 } {
             for _ in 0..N {
                 _ = next_elem();
             }
-            
+
             return;
         }
 
@@ -252,13 +258,26 @@ pub unsafe trait Sequence {
     }
 }
 
+/// Collects a sequence into an array in the most efficient way possible,
+/// ensuring that no unnecessary memory copies will occur.
+///
+/// The downside is that the consumer doesn't own the resulting array since
+/// `$name` only gets assigned a mutable reference to it.
 #[macro_export]
 macro_rules! collect_array {
-    ($seq:expr) => {{
-        let mut arr = ::core::mem::MaybeUninit::uninit();
-        $crate::Sequence::collect_array_in_place($seq, &mut arr);
-        unsafe { arr.assume_init() }
-    }};
+    ($name:tt: $ty:ty, $seq:expr) => {
+        // This is effectively private due to macro hygiene.
+        let mut buf: ::core::mem::MaybeUninit<$ty> = core::mem::MaybeUninit::uninit();
+        $crate::Sequence::collect_array_in_place($seq, &mut buf);
+        let $name: &mut $ty = unsafe { buf.assume_init_mut() };
+    };
+
+    ($buf:expr, $name:tt: $ty:ty, $seq:expr) => {
+        // This is effectively private due to macro hygiene.
+        let buf = &mut $buf;
+        $crate::Sequence::collect_array_in_place($seq, buf);
+        let $name: &mut $ty = unsafe { buf.assume_init_mut() };
+    };
 }
 
 #[cfg(test)]
@@ -296,9 +315,10 @@ mod tests {
             assert_eq!(*c, *a + *b);
         }
 
-        let fib2: [u128; 64] = collect_array! {
-            fib.as_seq().map(|n| (*n as u128) * (*n as u128))
-        };
+        let fib2: [u128; 64] = fib
+            .as_seq()
+            .map(|n| (*n as u128) * (*n as u128))
+            .collect_array();
 
         for (a, b) in zip(&fib, &fib2) {
             assert_eq!((*a as u128) * (*a as u128), *b);
@@ -316,7 +336,7 @@ mod tests {
         .take_exact_s::<128>()
         .flatten();
 
-        let arr: [(usize, usize); 64 * 128] = collect_array!(prog);
+        let arr: [(usize, usize); 64 * 128] = prog.collect_array();
 
         for (i, elem) in arr.iter().enumerate() {
             let x = i / 64;
@@ -326,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn collect_array_panic() {
+    fn collect_array_macro_panic() {
         let drop_counter = Mutex::new(0usize);
 
         struct Value<'a> {
@@ -351,17 +371,17 @@ mod tests {
         });
 
         let unwind = catch_unwind(|| {
-            let _: [_; 8] = collect_array!(my_seq);
+            collect_array!(_: [_; 8], my_seq);
         });
 
         assert!(unwind.is_err());
         assert_eq!(*drop_counter.lock().unwrap(), 7);
     }
-    
+
     #[test]
-    fn collect_array_zst() {
+    fn collect_array_macro_zst() {
         let seq = repeat(()).take_exact_s::<1000>();
-        let arr: [(); 900] = collect_array!(seq);
-        assert_eq!(arr, [(); 900]);
+        collect_array!(arr: [_; 900], seq);
+        assert_eq!(arr, &mut [(); 900]);
     }
 }
