@@ -307,9 +307,9 @@ macro_rules! collect_array {
 
 #[cfg(test)]
 mod tests {
-    use super::seq::{ArrayExt, IntoIteratorExt};
     use super::*;
     use crate::markers::WithConstSize;
+    use crate::seq::{ArrayExt, IntoIteratorExt};
     use itertools::Itertools;
     use std::hint::black_box;
     use std::iter::zip;
