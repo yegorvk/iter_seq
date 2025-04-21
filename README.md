@@ -15,19 +15,17 @@ converted into an iterator before its elements can be consumed.
 # Example
 
 ```rust
-use iter_seq::{Sequence, repeat};
+use iter_seq::{Sequence, seq};
 
 fn main() {
-    let odd_squares = repeat(())
-        .enumerate()
-        .map(|(i, _)| i as u32)
-        .map(|n| (n + 1) * (n + 1));
+    let odd_squares = seq::from_fn(|i| 2 * i as u32 + 1).map(|i| i * i);
 
     let arr: [u32; 128] = odd_squares.take_exact_s::<128>()
         .collect_array();
 
-    for (i, n) in arr.iter().enumerate() {
-        assert_eq!((i as u32 + 1) * (i as u32 + 1), *n);
+    for (i, x) in arr.iter().enumerate() {
+        let j = 2 * i as u32 + 1;
+        assert_eq!(j * j, x);
     }
 }
 ```
