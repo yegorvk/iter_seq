@@ -14,12 +14,11 @@
 //!
 //! # Example
 //! ```
-//! use iter_seq::{Sequence, repeat};
 //!
-//! let odd_squares = repeat(())
-//!     .enumerate()
-//!     .map(|(i, _)| i as u32)
-//!     .map(|n| (n + 1) * (n + 1));
+//!
+//! use iter_seq::{Sequence, seq};
+//!
+//! let odd_squares = seq::from_fn(|i| 2 * i as u32 + 1).map(|i| i * i);
 //!
 //! let arr: [u32; 128] = odd_squares.take_exact_s::<128>()
 //!     .collect_array();
@@ -33,33 +32,25 @@
 #[cfg(test)]
 extern crate std;
 
-mod adapters;
-mod bounds;
-mod sequences;
+pub mod adapters;
+pub mod markers;
+pub mod seq;
 mod size;
 mod utils;
 
+use crate::adapters::{Enumerate, FlatMap, Flatten, Map, TakeExactS, TakeExactSTn};
+use crate::markers::WithLowerBound;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::{array, mem};
+use typenum::{Const, Unsigned};
 
-pub use crate::adapters::{Enumerate, FlatMap, Flatten, Map, TakeExactS, TakeExactSTn};
-pub use crate::bounds::{LowerBound, UpperBound, WithLowerBound, WithUpperBound};
-pub use crate::sequences::{
-    from_fn, repeat, ArrayExt, ArrayMutSliceSeq, ArraySeq, ArraySliceSeq, FromFn, IntoIteratorExt,
-    IterSeq, Repeat,
-};
-pub use crate::size::{
-    DynamicSize, InfiniteSize, IsDynamic, IsEqual, IsFinite, IsGreaterOrEqual, IsGreaterThan,
-    IsInfinite, IsLessOrEqual, IsLessThan, Size, SizeKind, StaticSize,
-};
+pub use crate::size::*;
 pub use crate::utils::{ToUInt, U};
-pub use typenum;
-pub use typenum::{Const, Unsigned};
 
 /// Represents a stateless abstract sequence of values.
 ///
-/// This trait closely resembles `Iterator` in terms of functionality but unlike
+/// This trait closely resembles `Iterator` in terms of functionality, but unlike
 /// the latter, it cannot yield its elements directly. Instead, it must first be
 /// irreversibly converted into an iterator using `into_iter`.
 ///
@@ -67,9 +58,9 @@ pub use typenum::{Const, Unsigned};
 /// constant size, which is not possible with standard iterators.
 ///
 /// # Safety
-/// This crates is unsafe, because there are certain invariants on
+/// This trait is unsafe because there are certain invariants on
 /// `MinSize`/`min_size` and `MaxSize`/`max_size` that must be
-/// upheld in order to avoid causing undefined behaviours.
+/// upheld to avoid causing undefined behavior.
 pub unsafe trait Sequence {
     type Item;
     type Iter: Iterator<Item = Self::Item>;
@@ -88,8 +79,8 @@ pub unsafe trait Sequence {
     /// possible number of elements in the sequence.
     type MaxSize: Size;
 
-    const MIN_SIZE: Option<SizeKind> = Self::MinSize::STATIC_SIZE;
-    const MAX_SIZE: Option<SizeKind> = Self::MaxSize::STATIC_SIZE;
+    const MIN_SIZE: Option<SizeKind> = Self::MinSize::SIZE;
+    const MAX_SIZE: Option<SizeKind> = Self::MaxSize::SIZE;
 
     /// Converts this sequence into a (stateful) iterator.
     fn into_iter(self) -> Self::Iter;
@@ -258,16 +249,21 @@ pub unsafe trait Sequence {
     }
 }
 
+/// A sequence that is guaranteed to produce elements indefinitely, unless a panic occurs.
+pub trait InfiniteSequence: Sequence<MinSize = InfiniteSize> {}
+
+impl<S: Sequence<MinSize = InfiniteSize>> InfiniteSequence for S {}
+
 /// Collects a sequence into an array in the most efficient way possible,
 /// ensuring that no unnecessary memory copies will occur.
 ///
-/// The downside is that the consumer doesn't own the resulting array since
+/// The downside is that the caller doesn't own the resulting array because
 /// `$name` only gets assigned a mutable reference to it.
 #[macro_export]
 macro_rules! collect_array {
     ($name:tt: $ty:ty, $seq:expr) => {
         // This is effectively private due to macro hygiene.
-        let mut buf: ::core::mem::MaybeUninit<$ty> = core::mem::MaybeUninit::uninit();
+        let mut buf: ::core::mem::MaybeUninit<$ty> = ::core::mem::MaybeUninit::uninit();
         $crate::Sequence::collect_array_in_place($seq, &mut buf);
         let $name: &mut $ty = unsafe { buf.assume_init_mut() };
     };
@@ -280,8 +276,24 @@ macro_rules! collect_array {
     };
 }
 
+/// A helper trait to refer to a sequence with a known constant size.
+#[rustfmt::skip]
+pub trait ExactSizedSequence<const N: usize>:
+    Sequence<MinSize = StaticSize<U<N>>, MaxSize = StaticSize<U<N>>>
+where
+    Const<N>: ToUInt,
+{}
+
+#[rustfmt::skip]
+impl<S, const N: usize> ExactSizedSequence<N> for S 
+where
+    S: Sequence<MinSize = StaticSize<U<N>>, MaxSize = StaticSize<U<N>>>,
+    Const<N>: ToUInt,
+{}
+
 #[cfg(test)]
 mod tests {
+    use super::seq::{ArrayExt, IntoIteratorExt};
     use super::*;
     use itertools::Itertools;
     use std::iter::zip;
@@ -302,7 +314,7 @@ mod tests {
         let mut a = 0u64;
         let mut b = 1u64;
 
-        let fib: [u64; 64] = from_fn(|_| {
+        let fib: [u64; 64] = seq::from_fn(|_| {
             let c = a + b;
             a = b;
             b = c;
@@ -327,14 +339,9 @@ mod tests {
 
     #[test]
     fn flatten() {
-        let prog = from_fn(|i| {
-            repeat(())
-                .enumerate()
-                .map(move |(j, _)| (i, j))
-                .take_exact_s::<64>()
-        })
-        .take_exact_s::<128>()
-        .flatten();
+        let prog = seq::from_fn(|i| seq::from_fn(move |j| (i, j)).take_exact_s::<64>())
+            .take_exact_s::<128>()
+            .flatten();
 
         let arr: [(usize, usize); 64 * 128] = prog.collect_array();
 
@@ -360,7 +367,7 @@ mod tests {
             }
         }
 
-        let my_seq = from_fn(|i| {
+        let my_seq = seq::from_fn(|i| {
             if i < 7 {
                 Value {
                     drop_counter: &drop_counter,
@@ -380,7 +387,7 @@ mod tests {
 
     #[test]
     fn collect_array_macro_zst() {
-        let seq = repeat(()).take_exact_s::<1000>();
+        let seq = seq::repeat(()).take_exact_s::<1000>();
         collect_array!(arr: [_; 900], seq);
         assert_eq!(arr, &mut [(); 900]);
     }

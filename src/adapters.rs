@@ -1,5 +1,5 @@
-use crate::size::{flatten_size, FlattenSize, IsGreaterOrEqual, ToSize};
-use crate::{Sequence, Size, SizeKind, StaticSize, U};
+use crate::size::flatten_size;
+use crate::{FlattenSize, IsGreaterOrEqual, Sequence, Size, SizeKind, StaticSize, ToSize, U};
 use core::iter;
 use core::marker::PhantomData;
 use typenum::Unsigned;
@@ -123,7 +123,7 @@ where
 
     #[inline]
     fn min_size(&self) -> SizeKind {
-        if let Some(inner) = U::MinSize::STATIC_SIZE {
+        if let Some(inner) = U::MinSize::SIZE {
             flatten_size(self.seq.min_size(), inner)
         } else {
             SizeKind::Finite(0)
@@ -132,7 +132,7 @@ where
 
     #[inline]
     fn max_size(&self) -> SizeKind {
-        if let Some(inner) = U::MaxSize::STATIC_SIZE {
+        if let Some(inner) = U::MaxSize::SIZE {
             flatten_size(self.seq.max_size(), inner)
         } else {
             SizeKind::Infinite

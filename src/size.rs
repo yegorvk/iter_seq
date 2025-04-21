@@ -1,62 +1,77 @@
+use core::cmp::Ordering;
 use core::marker::PhantomData;
 use core::ops::Mul;
 use sealed::sealed;
 use typenum::Unsigned;
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SizeKind {
     Finite(usize),
     Infinite,
 }
 
-pub const fn flatten_size(outer: SizeKind, inner: SizeKind) -> SizeKind {
-    match (outer, inner) {
-        (SizeKind::Finite(n), SizeKind::Finite(m)) => SizeKind::Finite(n * m),
-        (_, SizeKind::Finite(0)) => SizeKind::Finite(0),
-        (SizeKind::Finite(0), _) => SizeKind::Finite(0),
-        (SizeKind::Infinite, _) => SizeKind::Infinite,
-        (_, SizeKind::Infinite) => SizeKind::Infinite,
+impl PartialOrd for SizeKind {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+
+impl Ord for SizeKind {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (SizeKind::Finite(n), SizeKind::Finite(m)) => n.cmp(m),
+            (SizeKind::Finite(_), SizeKind::Infinite) => Ordering::Less,
+            (SizeKind::Infinite, SizeKind::Finite(_)) => Ordering::Greater,
+            (SizeKind::Infinite, SizeKind::Infinite) => Ordering::Equal,
+        }
     }
 }
 
 #[sealed]
 pub trait Size {
-    const STATIC_SIZE: Option<SizeKind>;
+    const SIZE: Option<SizeKind>;
 
     fn size(&self) -> SizeKind;
 }
 
-#[sealed]
 pub trait ToSize {
     type Size: Size;
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct StaticSize<N: Unsigned>(PhantomData<N>);
 
 #[sealed]
 impl<N: Unsigned> Size for StaticSize<N> {
-    const STATIC_SIZE: Option<SizeKind> = Some(SizeKind::Finite(N::USIZE));
+    const SIZE: Option<SizeKind> = Some(SizeKind::Finite(N::USIZE));
 
     fn size(&self) -> SizeKind {
         SizeKind::Finite(N::to_usize())
     }
 }
 
-pub struct DynamicSize(pub usize);
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct DynamicSize {
+    size: usize,
+}
 
 #[sealed]
 impl Size for DynamicSize {
-    const STATIC_SIZE: Option<SizeKind> = None;
+    const SIZE: Option<SizeKind> = None;
 
     fn size(&self) -> SizeKind {
-        SizeKind::Finite(self.0)
+        SizeKind::Finite(self.size)
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct InfiniteSize;
 
 #[sealed]
 impl Size for InfiniteSize {
-    const STATIC_SIZE: Option<SizeKind> = Some(SizeKind::Infinite);
+    const SIZE: Option<SizeKind> = Some(SizeKind::Infinite);
 
     fn size(&self) -> SizeKind {
         SizeKind::Infinite
@@ -143,9 +158,9 @@ impl<N: Unsigned> IsGreaterThan<StaticSize<N>> for InfiniteSize {}
 #[sealed]
 impl<N: Unsigned> IsGreaterOrEqual<StaticSize<N>> for InfiniteSize {}
 
+#[doc(hidden)]
 pub struct FlattenSize<Outer, Inner>(PhantomData<(Outer, Inner)>);
 
-#[sealed]
 impl<N, M> ToSize for FlattenSize<StaticSize<N>, StaticSize<M>>
 where
     N: Unsigned + Mul<M>,
@@ -155,34 +170,38 @@ where
     type Size = StaticSize<typenum::Prod<N, M>>;
 }
 
-#[sealed]
 impl<N: Unsigned> ToSize for FlattenSize<StaticSize<N>, DynamicSize> {
     type Size = DynamicSize;
 }
 
-#[sealed]
 impl<N: Unsigned> ToSize for FlattenSize<DynamicSize, StaticSize<N>> {
     type Size = DynamicSize;
 }
 
-#[sealed]
 impl<N: Unsigned> ToSize for FlattenSize<StaticSize<N>, InfiniteSize> {
     // TODO: write proper dispatch logic.
     type Size = DynamicSize;
 }
 
-#[sealed]
 impl<N: Unsigned> ToSize for FlattenSize<InfiniteSize, StaticSize<N>> {
     // TODO: write proper dispatch logic.
     type Size = DynamicSize;
 }
 
-#[sealed]
 impl ToSize for FlattenSize<DynamicSize, InfiniteSize> {
     type Size = DynamicSize;
 }
 
-#[sealed]
 impl ToSize for FlattenSize<InfiniteSize, DynamicSize> {
     type Size = DynamicSize;
+}
+
+pub(crate) const fn flatten_size(outer: SizeKind, inner: SizeKind) -> SizeKind {
+    match (outer, inner) {
+        (SizeKind::Finite(n), SizeKind::Finite(m)) => SizeKind::Finite(n * m),
+        (_, SizeKind::Finite(0)) => SizeKind::Finite(0),
+        (SizeKind::Finite(0), _) => SizeKind::Finite(0),
+        (SizeKind::Infinite, _) => SizeKind::Infinite,
+        (_, SizeKind::Infinite) => SizeKind::Infinite,
+    }
 }
