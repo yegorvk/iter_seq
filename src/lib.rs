@@ -43,6 +43,7 @@ use crate::adapters::{Enumerate, FlatMap, Flatten, Map, TakeExactS, TakeExactSTn
 use crate::markers::WithLowerBound;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
+use core::ptr::{drop_in_place, NonNull};
 use core::{array, mem};
 use typenum::{Const, Unsigned};
 
@@ -135,39 +136,67 @@ pub unsafe trait Sequence {
 
         // Special handling for ZSTs.
         if const { size_of::<Self::Item>() == 0 } {
-            for _ in 0..N {
-                _ = next_elem();
+            if const { mem::needs_drop::<Self::Item>() } {
+                struct Guard<T> {
+                    filled: usize,
+                    _t: PhantomData<T>,
+                }
+
+                impl<T> Drop for Guard<T> {
+                    fn drop(&mut self) {
+                        for _ in 0..self.filled {
+                            let elem_ptr: *mut T = NonNull::dangling().as_ptr();
+                            // SAFETY: a dangling pointer is always valid for zero-sized types.
+                            unsafe { drop_in_place(elem_ptr) }
+                        }
+                    }
+                }
+
+                let mut guard: Guard<Self::Item> = Guard {
+                    filled: 0,
+                    _t: PhantomData,
+                };
+
+                for _ in 0..N {
+                    // IMPORTANT!: we should not drop the element here,
+                    // even though it is a zero-sized type.
+                    mem::forget(next_elem());
+                    guard.filled += 1;
+                }
+
+                mem::forget(guard);
+            } else {
+                for _ in 0..N {
+                    _ = next_elem();
+                }
             }
 
             return;
         }
 
+        let ptr: *mut Self::Item = out.as_mut_ptr().cast();
+
         if const { mem::needs_drop::<Self::Item>() } {
-            struct DropGuard<'a, T, const N: usize> {
-                arr: &'a mut MaybeUninit<[T; N]>,
+            struct Guard<T> {
+                ptr: *mut T,
                 filled: usize,
             }
 
-            impl<T, const N: usize> Drop for DropGuard<'_, T, N> {
+            impl<T> Drop for Guard<T> {
                 fn drop(&mut self) {
                     for i in 0..self.filled {
-                        let ptr = self.arr.as_mut_ptr() as *mut T;
-                        let slot = unsafe { ptr.add(i) };
-                        unsafe { core::ptr::drop_in_place(slot) };
+                        let slot = unsafe { self.ptr.add(i) };
+                        unsafe { drop_in_place(slot) };
                     }
                 }
             }
 
-            let mut guard = DropGuard {
-                arr: out,
-                filled: 0,
-            };
+            let mut guard = Guard { ptr, filled: 0 };
 
             while guard.filled < N {
                 // This could panic.
                 let elem = next_elem();
-                let ptr: *mut Self::Item = guard.arr.as_mut_ptr().cast();
-                let slot = unsafe { ptr.add(guard.filled) };
+                let slot = unsafe { guard.ptr.add(guard.filled) };
                 unsafe { slot.write(elem) }
                 guard.filled += 1;
             }
@@ -177,7 +206,6 @@ pub unsafe trait Sequence {
             for i in 0..N {
                 // We don't care if it panics.
                 let elem = next_elem();
-                let ptr: *mut Self::Item = out.as_mut_ptr().cast();
                 let slot = unsafe { ptr.add(i) };
                 unsafe { slot.write(elem) }
             }
@@ -283,6 +311,7 @@ mod tests {
     use super::*;
     use crate::markers::WithConstSize;
     use itertools::Itertools;
+    use std::hint::black_box;
     use std::iter::zip;
     use std::panic::catch_unwind;
     use std::sync::Mutex;
@@ -340,6 +369,13 @@ mod tests {
     }
 
     #[test]
+    fn collect_array_macro() {
+        let seq = seq::from_fn(|_| black_box(1)).take_exact_s::<1000>();
+        collect_array!(arr: [_; 900], seq);
+        assert_eq!(arr, &mut [1; 900]);
+    }
+
+    #[test]
     fn collect_array_macro_panic() {
         let drop_counter = Mutex::new(0usize);
 
@@ -377,6 +413,35 @@ mod tests {
         let seq = seq::repeat(()).take_exact_s::<1000>();
         collect_array!(arr: [_; 900], seq);
         assert_eq!(arr, &mut [(); 900]);
+    }
+
+    #[test]
+    fn collect_array_macro_zst_panic() {
+        static DROP_COUNTER: Mutex<usize> = Mutex::new(0usize);
+
+        struct Value;
+
+        impl Drop for Value {
+            fn drop(&mut self) {
+                let mut guard = DROP_COUNTER.lock().unwrap();
+                *guard += 1;
+            }
+        }
+
+        let my_seq = seq::from_fn(|i| {
+            if i < 7 {
+                Value
+            } else {
+                panic!();
+            }
+        });
+
+        let unwind = catch_unwind(|| {
+            collect_array!(_: [_; 8], my_seq);
+        });
+
+        assert!(unwind.is_err());
+        assert_eq!(*DROP_COUNTER.lock().unwrap(), 7);
     }
 
     #[test]
