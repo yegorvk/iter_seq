@@ -41,10 +41,10 @@ pub trait ToSize {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct StaticSize<N: Unsigned>(PhantomData<N>);
+pub struct ConstSize<N: Unsigned>(PhantomData<N>);
 
 #[sealed]
-impl<N: Unsigned> Size for StaticSize<N> {
+impl<N: Unsigned> Size for ConstSize<N> {
     const SIZE: Option<SizeKind> = Some(SizeKind::Finite(N::USIZE));
 
     fn size(&self) -> SizeKind {
@@ -82,7 +82,7 @@ impl Size for InfiniteSize {
 pub trait IsFinite {}
 
 #[sealed]
-impl<N: Unsigned> IsFinite for StaticSize<N> {}
+impl<N: Unsigned> IsFinite for ConstSize<N> {}
 
 #[sealed]
 pub trait IsInfinite {}
@@ -113,77 +113,77 @@ pub trait IsEqual<Rhs: Size> {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsEqual<StaticSize<M>> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsEqual<ConstSize<M>> for ConstSize<N> 
 where 
     N: typenum::IsEqual<M> 
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsLessThan<StaticSize<M>> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsLessThan<ConstSize<M>> for ConstSize<N> 
 where 
     N: typenum::IsLess<M> 
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsLessOrEqual<StaticSize<M>> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsLessOrEqual<ConstSize<M>> for ConstSize<N> 
 where 
     N: typenum::IsLessOrEqual<M> 
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsGreaterThan<StaticSize<M>> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsGreaterThan<ConstSize<M>> for ConstSize<N> 
 where 
     N: typenum::IsGreater<M> 
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<N: Unsigned, M: Unsigned> IsGreaterOrEqual<StaticSize<M>> for StaticSize<N> 
+impl<N: Unsigned, M: Unsigned> IsGreaterOrEqual<ConstSize<M>> for ConstSize<N> 
 where
     N: typenum::IsGreaterOrEqual<M>
 {}
 
 #[sealed]
-impl<N: Unsigned> IsLessThan<InfiniteSize> for StaticSize<N> {}
+impl<N: Unsigned> IsLessThan<InfiniteSize> for ConstSize<N> {}
 
 #[sealed]
-impl<N: Unsigned> IsLessOrEqual<InfiniteSize> for StaticSize<N> {}
+impl<N: Unsigned> IsLessOrEqual<InfiniteSize> for ConstSize<N> {}
 
 #[sealed]
-impl<N: Unsigned> IsGreaterThan<StaticSize<N>> for InfiniteSize {}
+impl<N: Unsigned> IsGreaterThan<ConstSize<N>> for InfiniteSize {}
 
 #[sealed]
-impl<N: Unsigned> IsGreaterOrEqual<StaticSize<N>> for InfiniteSize {}
+impl<N: Unsigned> IsGreaterOrEqual<ConstSize<N>> for InfiniteSize {}
 
 #[doc(hidden)]
 pub struct FlattenSize<Outer, Inner>(PhantomData<(Outer, Inner)>);
 
-impl<N, M> ToSize for FlattenSize<StaticSize<N>, StaticSize<M>>
+impl<N, M> ToSize for FlattenSize<ConstSize<N>, ConstSize<M>>
 where
     N: Unsigned + Mul<M>,
     M: Unsigned,
     typenum::Prod<N, M>: Unsigned,
 {
-    type Size = StaticSize<typenum::Prod<N, M>>;
+    type Size = ConstSize<typenum::Prod<N, M>>;
 }
 
-impl<N: Unsigned> ToSize for FlattenSize<StaticSize<N>, DynamicSize> {
+impl<N: Unsigned> ToSize for FlattenSize<ConstSize<N>, DynamicSize> {
     type Size = DynamicSize;
 }
 
-impl<N: Unsigned> ToSize for FlattenSize<DynamicSize, StaticSize<N>> {
+impl<N: Unsigned> ToSize for FlattenSize<DynamicSize, ConstSize<N>> {
     type Size = DynamicSize;
 }
 
-impl<N: Unsigned> ToSize for FlattenSize<StaticSize<N>, InfiniteSize> {
+impl<N: Unsigned> ToSize for FlattenSize<ConstSize<N>, InfiniteSize> {
     // TODO: write proper dispatch logic.
     type Size = DynamicSize;
 }
 
-impl<N: Unsigned> ToSize for FlattenSize<InfiniteSize, StaticSize<N>> {
+impl<N: Unsigned> ToSize for FlattenSize<InfiniteSize, ConstSize<N>> {
     // TODO: write proper dispatch logic.
     type Size = DynamicSize;
 }

@@ -1,4 +1,4 @@
-use crate::{DynamicSize, Enumerate, InfiniteSize, Map, Sequence, SizeKind, StaticSize, ToUInt, U};
+use crate::{DynamicSize, Enumerate, InfiniteSize, Map, Sequence, SizeKind, ConstSize, ToUInt, U};
 use core::{array, iter, slice};
 use typenum::Const;
 
@@ -48,8 +48,8 @@ where
     type Item = T;
     type Iter = array::IntoIter<T, N>;
 
-    type MinSize = StaticSize<U<N>>;
-    type MaxSize = StaticSize<U<N>>;
+    type MinSize = ConstSize<U<N>>;
+    type MaxSize = ConstSize<U<N>>;
 
     #[inline]
     fn into_iter(self) -> Self::Iter {
@@ -78,8 +78,8 @@ where
     type Item = &'a T;
     type Iter = slice::Iter<'a, T>;
 
-    type MinSize = StaticSize<U<N>>;
-    type MaxSize = StaticSize<U<N>>;
+    type MinSize = ConstSize<U<N>>;
+    type MaxSize = ConstSize<U<N>>;
 
     #[inline]
     fn into_iter(self) -> Self::Iter {
@@ -108,8 +108,8 @@ where
     type Item = &'a mut T;
     type Iter = slice::IterMut<'a, T>;
 
-    type MinSize = StaticSize<U<N>>;
-    type MaxSize = StaticSize<U<N>>;
+    type MinSize = ConstSize<U<N>>;
+    type MaxSize = ConstSize<U<N>>;
 
     #[inline]
     fn into_iter(self) -> Self::Iter {

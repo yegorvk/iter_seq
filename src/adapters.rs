@@ -1,5 +1,5 @@
 use crate::size::flatten_size;
-use crate::{FlattenSize, IsGreaterOrEqual, Sequence, Size, SizeKind, StaticSize, ToSize, U};
+use crate::{FlattenSize, IsGreaterOrEqual, Sequence, Size, SizeKind, ConstSize, ToSize, U};
 use core::iter;
 use core::marker::PhantomData;
 use typenum::Unsigned;
@@ -74,13 +74,13 @@ pub struct TakeExactSTn<S, N: Unsigned> {
 
 unsafe impl<S: Sequence, N: Unsigned> Sequence for TakeExactSTn<S, N>
 where
-    S::MinSize: IsGreaterOrEqual<StaticSize<N>>,
+    S::MinSize: IsGreaterOrEqual<ConstSize<N>>,
 {
     type Item = S::Item;
     type Iter = iter::Take<S::Iter>;
 
-    type MinSize = StaticSize<N>;
-    type MaxSize = StaticSize<N>;
+    type MinSize = ConstSize<N>;
+    type MaxSize = ConstSize<N>;
 
     #[inline]
     fn into_iter(self) -> Self::Iter {

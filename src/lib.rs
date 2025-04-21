@@ -24,7 +24,8 @@
 //!     .collect_array();
 //!
 //! for (i, n) in arr.iter().enumerate() {
-//!     assert_eq!((i as u32 + 1) * (i as u32 + 1), *n);
+//!     let j = 2 * i as u32 + 1;
+//!     assert_eq!(j * j, *n);
 //! }
 //!
 //! ```
@@ -276,25 +277,11 @@ macro_rules! collect_array {
     };
 }
 
-/// A helper trait to refer to a sequence with a known constant size.
-#[rustfmt::skip]
-pub trait ExactSizedSequence<const N: usize>:
-    Sequence<MinSize = StaticSize<U<N>>, MaxSize = StaticSize<U<N>>>
-where
-    Const<N>: ToUInt,
-{}
-
-#[rustfmt::skip]
-impl<S, const N: usize> ExactSizedSequence<N> for S 
-where
-    S: Sequence<MinSize = StaticSize<U<N>>, MaxSize = StaticSize<U<N>>>,
-    Const<N>: ToUInt,
-{}
-
 #[cfg(test)]
 mod tests {
     use super::seq::{ArrayExt, IntoIteratorExt};
     use super::*;
+    use crate::markers::WithConstSize;
     use itertools::Itertools;
     use std::iter::zip;
     use std::panic::catch_unwind;
@@ -390,5 +377,16 @@ mod tests {
         let seq = seq::repeat(()).take_exact_s::<1000>();
         collect_array!(arr: [_; 900], seq);
         assert_eq!(arr, &mut [(); 900]);
+    }
+
+    #[test]
+    fn ret_seq() {
+        fn odds() -> impl Sequence<Item = u32> + WithConstSize<1024> {
+            seq::from_fn(|i| 2 * i as u32 + 1).take_exact_s::<1024>()
+        }
+
+        for (i, x) in odds().into_iter().enumerate() {
+            assert_eq!(i as u32 * 2 + 1, x);
+        }
     }
 }

@@ -1,4 +1,4 @@
-use crate::{IsGreaterOrEqual, IsLessOrEqual, Sequence, Size, StaticSize, ToUInt, U};
+use crate::{IsGreaterOrEqual, IsLessOrEqual, Sequence, Size, ConstSize, ToUInt, U};
 use sealed::sealed;
 use typenum::{Const, Unsigned};
 
@@ -17,7 +17,7 @@ pub unsafe trait LowerBound<N: Unsigned>: Sequence {}
 #[sealed]
 unsafe impl<S: Sequence, N: Unsigned> LowerBound<N> for S
 where
-    S::MinSize: IsGreaterOrEqual<StaticSize<N>>,
+    S::MinSize: IsGreaterOrEqual<ConstSize<N>>,
 {}
 
 /// Asserts that a `Sequence` is guaranteed to produce *at most* `N` elements.
@@ -35,7 +35,7 @@ pub unsafe trait UpperBound<N: Unsigned>: Sequence {}
 #[sealed]
 unsafe impl<S: Sequence, N: Unsigned> UpperBound<N> for S
 where
-    S::MinSize: IsLessOrEqual<StaticSize<N>>,
+    S::MinSize: IsLessOrEqual<ConstSize<N>>,
 {}
 
 /// The same as [`LowerBound`], but uses const generics instead of type level integers.
@@ -102,13 +102,13 @@ where
 ///
 /// This trait should be used to constrain the result, unlike [`LowerBound`].
 #[sealed]
-pub trait StaticMinSize<N: Unsigned>: Sequence<MinSize = StaticSize<N>> {}
+pub trait ConstMinSize<N: Unsigned>: Sequence<MinSize = ConstSize<N>> {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<S, N> StaticMinSize<N> for S 
+impl<S, N> ConstMinSize<N> for S 
 where
-    S: Sequence<MinSize = StaticSize<N>>,
+    S: Sequence<MinSize = ConstSize<N>>,
     N: Unsigned,
 {}
 
@@ -116,42 +116,83 @@ where
 ///
 /// This trait should be used to constrain the result, unlike [`UpperBound`].
 #[sealed]
-pub trait StaticMaxSize<N: Unsigned>: Sequence<MaxSize = StaticSize<N>> {}
+pub trait ConstMaxSize<N: Unsigned>: Sequence<MaxSize = ConstSize<N>> {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<S, N> StaticMaxSize<N> for S 
+impl<S, N> ConstMaxSize<N> for S 
 where
-    S: Sequence<MaxSize = StaticSize<N>>,
+    S: Sequence<MaxSize = ConstSize<N>>,
     N: Unsigned,
 {}
 
-/// The same as [`StaticMinSize`], but uses const generics instead of type level integers.
+/// The same as [`ConstMinSize`], but uses const generics instead of type level integers.
 #[rustfmt::skip]
 #[sealed]
-pub trait WithStaticMinSize<const N: usize>: StaticMinSize<U<N>>
+pub trait WithConstMinSize<const N: usize>: ConstMinSize<U<N>>
 where
     Const<N>: ToUInt,
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<S: StaticMinSize<U<N>>, const N: usize> WithStaticMinSize<N> for S 
+impl<S: ConstMinSize<U<N>>, const N: usize> WithConstMinSize<N> for S 
 where
     Const<N>: ToUInt,
 {}
 
-/// The same as [`StaticMaxSize`], but uses const generics instead of type level integers.
+/// The same as [`ConstMaxSize`], but uses const generics instead of type level integers.
 #[rustfmt::skip]
 #[sealed]
-pub trait WithStaticMaxSize<const N: usize>: StaticMaxSize<U<N>>
+pub trait WithConstMaxSize<const N: usize>: ConstMaxSize<U<N>>
 where
     Const<N>: ToUInt,
 {}
 
 #[rustfmt::skip]
 #[sealed]
-impl<S: StaticMaxSize<U<N>>, const N: usize> WithStaticMaxSize<N> for S 
+impl<S: ConstMaxSize<U<N>>, const N: usize> WithConstMaxSize<N> for S 
 where
+    Const<N>: ToUInt,
+{}
+
+/// Constraints `min_size` and `max_size` of a `Sequence`.
+#[sealed]
+trait ExactSize<D: Size>: Sequence<MinSize = D, MaxSize = D> {}
+
+#[rustfmt::skip]
+#[sealed]
+impl<S, D> ExactSize<D> for S 
+where
+    S: Sequence<MinSize = D, MaxSize = D>,
+    D: Size,
+{}
+
+/// Constraints `min_size` and `max_size` of a `Sequence` to a constant value.
+#[allow(private_bounds)]
+#[sealed]
+pub trait ExactConstSize<N: Unsigned>: ExactSize<ConstSize<N>> {}
+
+#[rustfmt::skip]
+#[sealed]
+impl<S, N> ExactConstSize<N> for S 
+where
+    S: ExactSize<ConstSize<N>>,
+    N: Unsigned,
+{}
+
+/// The same as [`ExactConstSize`], but uses const generics instead of type level integers.
+#[sealed]
+pub trait WithConstSize<const N: usize>: ExactConstSize<U<N>>
+where
+    Const<N>: ToUInt,
+{
+}
+
+#[rustfmt::skip]
+#[sealed]
+impl<S, const N: usize> WithConstSize<N> for S 
+where
+    S: ExactConstSize<U<N>>,
     Const<N>: ToUInt,
 {}
